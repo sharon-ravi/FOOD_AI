@@ -1,0 +1,5 @@
+data/
+*.pkl
+*.faiss
+__pycache__/
+.env
