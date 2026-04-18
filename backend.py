@@ -1,12 +1,13 @@
 # ============================================
-# 🔥 FOOD AI BACKEND (STREAMLIT SAFE VERSION)
+# 🔥 FOOD AI BACKEND (STREAMLIT CLOUD READY)
 # ============================================
 
 import os
 import pickle
 import numpy as np
-
 import faiss
+import gdown
+
 from rank_bm25 import BM25Okapi
 from sentence_transformers import SentenceTransformer, CrossEncoder
 from openai import OpenAI
@@ -15,19 +16,50 @@ from openai import OpenAI
 # 🔹 CONFIG
 # ============================================
 
-INDEX_PATH = "data/final/final_index.faiss"
-META_PATH = "data/final/final_meta.pkl"
+DATA_DIR = "data"
+INDEX_PATH = f"{DATA_DIR}/final_index.faiss"
+META_PATH = f"{DATA_DIR}/final_meta.pkl"
+
+# 👉 GOOGLE DRIVE FILE IDS (REPLACE THESE)
+INDEX_FILE_ID = "https://drive.google.com/file/d/1pFpCYY0KIjmmqNVZ5qtMsQqZmzIcbV1U/view?usp=sharing"
+META_FILE_ID = "https://drive.google.com/file/d/1dCC8r1CoN7AJwifh7ZGHOWPu8mWSA6Df/view?usp=sharing"
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
 # ============================================
-# 🔹 SAFE DATA LOADER (NO CRASH)
+# 🔥 DOWNLOAD DATA FROM GOOGLE DRIVE
+# ============================================
+
+def download_if_missing():
+
+    os.makedirs(DATA_DIR, exist_ok=True)
+
+    if not os.path.exists(INDEX_PATH):
+        print("⬇️ Downloading FAISS index...")
+        gdown.download(
+            f"https://drive.google.com/uc?id={INDEX_FILE_ID}",
+            INDEX_PATH,
+            quiet=False
+        )
+
+    if not os.path.exists(META_PATH):
+        print("⬇️ Downloading metadata...")
+        gdown.download(
+            f"https://drive.google.com/uc?id={META_FILE_ID}",
+            META_PATH,
+            quiet=False
+        )
+
+# ============================================
+# 🔹 LOAD DATA
 # ============================================
 
 def load_data():
+    download_if_missing()
+
     if not os.path.exists(INDEX_PATH) or not os.path.exists(META_PATH):
-        print("⚠️ FAISS data not found. Running in SAFE MODE.")
+        print("❌ Data not found after download.")
         return None, None
 
     index = faiss.read_index(INDEX_PATH)
@@ -39,6 +71,36 @@ def load_data():
 
 
 index, meta = load_data()
+
+# ============================================
+# 🔹 MODELS
+# ============================================
+
+embed_model = SentenceTransformer(
+    "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+)
+
+reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+
+# ============================================
+# 🔹 BM25 INIT
+# ============================================
+
+bm25 = None
+
+if meta:
+    texts = [m["name"] + " " + str(m.get("brand", "")) for m in meta]
+    corpus = [t.lower().split() for t in texts]
+    bm25 = BM25Okapi(corpus)
+
+# ============================================
+# 🔹 GROQ CLIENT
+# ============================================
+
+client = OpenAI(
+    api_key=GROQ_API_KEY,
+    base_url="https://api.groq.com/openai/v1"
+)
 
 # ============================================
 # 🔹 CLEAN FUNCTION
@@ -53,28 +115,6 @@ def clean_name(x):
     return str(x)
 
 # ============================================
-# 🔹 EMBEDDING MODEL
-# ============================================
-
-embed_model = SentenceTransformer(
-    "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
-)
-
-reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
-
-# ============================================
-# 🔹 BM25 (SAFE INIT)
-# ============================================
-
-bm25 = None
-corpus = None
-
-if meta:
-    texts = [m["name"] + " " + str(m.get("brand", "")) for m in meta]
-    corpus = [t.lower().split() for t in texts]
-    bm25 = BM25Okapi(corpus)
-
-# ============================================
 # 🔹 STRUCTURE TEXT
 # ============================================
 
@@ -87,18 +127,16 @@ def build_structured_text(row):
     )
 
 # ============================================
-# 🔥 SIMPLE FALLBACK (IF DATA NOT LOADED)
+# 🚨 FALLBACK MODE (NO DATA)
 # ============================================
 
-def fallback_response(query):
+def fallback(query):
     return f"""
-⚠️ Dataset not loaded on server.
+⚠️ Dataset not loaded.
 
-Your app UI is working, but FAISS dataset is missing.
+Query: {query}
 
-Query received: {query}
-
-👉 Fix: Upload FAISS index OR connect cloud storage.
+👉 Check Google Drive file IDs or internet connection.
 """
 
 # ============================================
@@ -107,9 +145,8 @@ Query received: {query}
 
 def generate_response(query, mode="chatbot"):
 
-    # SAFE MODE CHECK
     if index is None or meta is None:
-        return fallback_response(query)
+        return fallback(query)
 
     # ==============================
     # FAISS SEARCH
@@ -124,10 +161,10 @@ def generate_response(query, mode="chatbot"):
         return "No results found."
 
     # ==============================
-    # FORMAT OUTPUT
+    # OUTPUT FORMAT
     # ==============================
 
-    output = "🔍 Top Results:\n\n"
+    output = "🔍 Top Food Results:\n\n"
 
     for i, r in enumerate(results[:5], 1):
         name = clean_name(r.get("name"))
