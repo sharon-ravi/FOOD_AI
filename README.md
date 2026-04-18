@@ -81,7 +81,7 @@ export GROQ_API_KEY="your_key"
 CLI:
 
 ```bash
-python app.py
+python backend.py
 ```
 
 Streamlit:
